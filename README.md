@@ -28,13 +28,18 @@ A high-performance Rust-based Model Context Protocol (MCP) server that connects 
 ### 1. `mcp_registration.json` (The Shortcut)
 Open the generated `mcp_registration.json` in your project root. It contains the **exact absolute path** of your `lm-bridge.exe` and your current model name. You can copy this block directly into your Antigravity configuration.
 
-### 2. `config.toml` (Project Root)
-The server reads its prompt templates and default model from `config.toml`. The binary is designed to find this file automatically in the project root folder.
+### 1. Find Your Model Name
+Open **LM Studio** and look at your loaded model. You will see a small badge (e.g., `qwen/qwen3.5-9b` or `TheBloke/Llama-2-7B-Chat-GGUF`). 
+**You must copy this string exactly.**
 
-**Crucial:** Ensure the `model` name matches exactly what LM Studio displays in its load badge.
+### 2. Set the Model Name
+You have two ways to set the model:
+-   **Method A (Easiest):** Edit the `model` field in your **`config.toml`** file.
+-   **Method B (Active):** Edit the `LM_STUDIO_MODEL` environment variable in your **`mcp_config.json`**. (This will always override your `config.toml`).
+
 ```toml
-lm_studio_url = "http://localhost:1234"
-model = "qwen/qwen3.5-9b"
+# In config.toml
+model = "your-copied-model-name-here"
 ```
 
 ### 3. Antigravity Registration (The Final Step)
