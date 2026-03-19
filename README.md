@@ -58,6 +58,24 @@ model = "qwen/qwen3.5-9b"
 }
 ```
 
+## Agent Behavior & Privacy Rules (CRITICAL)
+
+To make Gemini intelligently use your local model without being prompted every time, you should add these **Global Rules** to your Antigravity Agent:
+
+1.  Click the **`+`** (or `...`) menu in the top-right of your chat window.
+2.  Select **Customization** (or **Rules**).
+3.  Add a new rule with the following content:
+
+### # 1. Privacy & Tool Routing
+Whenever you are asked to generate or edit source code, you should prioritize delegating the task to the **local_llm** tools. Use your cloud reasoning for planning, but use the local model for the final implementation to ensure privacy.
+
+### # 2. Agent Behavior
+* Always briefly explain your architectural plan before invoking the MCP tools to write the code.
+* Do not apologize or use filler phrases; keep your responses concise and technical.
+* When debugging, state your hypothesis clearly before editing files.
+
+---
+
 ## Features & Usage
 
 - **Orchestrated Generation:** Gemini acts as the Architect (planning), while your local LLM acts as the Builder (writing code).
