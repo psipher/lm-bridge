@@ -1,0 +1,57 @@
+lm_studio_url = "http://localhost:1234"
+model = "qwen/qwen3.5-9b"
+
+[prompt_templates]
+generate_code = """
+You are an expert software developer. Please fulfill the following coding task.
+
+Language: {language}
+File Path: {file_path}
+
+Context:
+{context}
+
+Task:
+{task}
+
+Provide only the necessary code, ensuring it is correct, clean, and fulfills the task constraints.
+"""
+
+edit_code = """
+You are an expert software developer. Please modify the following code according to the instructions.
+
+Language: {language}
+
+Existing Code:
+{existing_code}
+
+Instructions:
+{instruction}
+
+Provide only the modified code, ensuring it is correct and follows the instructions.
+"""
+
+complete_code = """
+You are an expert software developer. Please complete the following partial snippet.
+
+Language: {language}
+
+Context:
+{context}
+
+Prefix Snippet:
+{prefix}
+
+Provide only the completion code that seamlessly follows the prefix.
+"""
+
+explain_code = """
+You are an expert software developer. Please explain the following code in plain language.
+
+Language: {language}
+
+Code:
+{code}
+
+Provide a clear and concise explanation of what the code does, its inputs and outputs, and any important design details.
+"""

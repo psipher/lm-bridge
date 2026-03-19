@@ -1,0 +1,383 @@
+use std::env;
+use std::path::PathBuf;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use reqwest::ClientBuilder;
+
+#[derive(Deserialize, Debug, Clone)]
+struct Config {
+    #[serde(default = "default_url")]
+    lm_studio_url: String,
+    model: String,
+    prompt_templates: PromptTemplates,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct PromptTemplates {
+    generate_code: String,
+    edit_code: String,
+    complete_code: String,
+    explain_code: String,
+}
+
+fn default_url() -> String {
+    "http://localhost:1234".to_string()
+}
+
+// JSON-RPC Requests
+#[derive(Deserialize, Debug)]
+struct RpcRequest {
+    #[allow(dead_code)]
+    jsonrpc: String,
+    id: Option<Value>,
+    method: String,
+    #[serde(default)]
+    params: Value,
+}
+
+// JSON-RPC Responses
+#[derive(Serialize, Debug)]
+struct RpcResponse {
+    jsonrpc: String,
+    id: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<RpcError>,
+}
+
+#[derive(Serialize, Debug)]
+struct RpcError {
+    code: i32,
+    message: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Check same dir as exe
+    let mut config_path = env::current_exe()?.parent().unwrap().to_path_buf().join("config.toml");
+    
+    if !config_path.exists() {
+        // 2. Check parent dir (e.g. if binary is in target/release)
+        if let Some(parent) = config_path.parent().and_then(|p| p.parent()) {
+            let p_path = parent.join("config.toml");
+            if p_path.exists() {
+                config_path = p_path;
+            }
+        }
+    }
+
+    if !config_path.exists() {
+        // 3. Check grandparent dir (e.g. if binary is in target/release/build/...)
+        if let Some(gp) = config_path.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            let gp_path = gp.join("config.toml");
+            if gp_path.exists() {
+                config_path = gp_path;
+            }
+        }
+    }
+
+    if !config_path.exists() {
+        // Fallback to current dir if nothing else works
+        config_path = PathBuf::from("config.toml");
+    }
+
+    let config_content = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to read {}: {}", config_path.display(), e);
+            std::process::exit(1);
+        });
+
+    let mut config: Config = toml::from_str(&config_content)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to parse config.toml: {}", e);
+            std::process::exit(1);
+        });
+
+    if let Ok(env_model) = env::var("LM_STUDIO_MODEL") {
+        config.model = env_model;
+    }
+
+    // Generate mcp_registration.json snippet for the user
+    if let Some(root) = config_path.parent() {
+        let snippet_path = root.join("mcp_registration.json");
+        // Ensure path for JSON uses escaped double-backslashes for Windows
+        let exe_path = env::current_exe()?.to_string_lossy().replace("\\", "\\\\");
+        let snippet = json!({
+            "mcpServers": {
+                "local_llm": {
+                    "command": exe_path,
+                    "args": [],
+                    "env": {
+                        "LM_STUDIO_MODEL": config.model
+                    }
+                }
+            }
+        });
+        if let Ok(content) = serde_json::to_string_pretty(&snippet) {
+            let _ = std::fs::write(&snippet_path, content);
+        }
+    }
+
+    // NEW: Check for one-shot registration flag
+    let args: Vec<String> = env::args().collect();
+    if args.contains(&"--register".to_string()) {
+        println!("Successfully generated mcp_registration.json in the project root.");
+        return Ok(());
+    }
+
+    let client = ClientBuilder::new()
+        .timeout(Duration::from_secs(600)) // 10 minutes timeout
+        .build()?;
+
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin).lines();
+
+    while let Ok(Some(line)) = reader.next_line().await {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request: Result<RpcRequest, _> = serde_json::from_str(&line);
+        let req = match request {
+            Ok(r) => r,
+            Err(e) => {
+                let err_resp = json!({
+                    "jsonrpc": "2.0",
+                    "id": Value::Null,
+                    "error": { "code": -32700, "message": format!("Parse error: {}", e) }
+                });
+                println!("{}", err_resp);
+                continue;
+            }
+        };
+
+        let id = match req.id {
+            Some(i) => i,
+            None => continue, // Ignore JSON-RPC notifications entirely (no ID means no response needed)
+        };
+
+        if req.method == "initialize" {
+            let resp = RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(json!({
+                    "protocolVersion": "2024-11-05", // Required by standard MCP
+                    "capabilities": {
+                        "tools": { "listChanged": false }
+                    },
+                    "serverInfo": {
+                        "name": "local_llm",
+                        "version": "0.1.0"
+                    }
+                })),
+                error: None,
+            };
+            println!("{}", serde_json::to_string(&resp)?);
+            continue;
+        }
+
+        if req.method == "tools/list" {
+            let resp = RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(json!({
+                    "tools": [
+                        {
+                            "name": "local_generate",
+                            "description": "sends a full coding task, returns generated code.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "task": { "type": "string" },
+                                    "language": { "type": "string" },
+                                    "context": { "type": "string" },
+                                    "file_path": { "type": "string" }
+                                },
+                                "required": ["task", "language", "context", "file_path"]
+                            }
+                        },
+                        {
+                            "name": "local_edit",
+                            "description": "sends existing code + edit instruction, returns modified code.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "existing_code": { "type": "string" },
+                                    "instruction": { "type": "string" },
+                                    "language": { "type": "string" }
+                                },
+                                "required": ["existing_code", "instruction", "language"]
+                            }
+                        },
+                        {
+                            "name": "local_complete",
+                            "description": "fills in a partial snippet.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "prefix": { "type": "string" },
+                                    "language": { "type": "string" },
+                                    "context": { "type": "string" }
+                                },
+                                "required": ["prefix", "language", "context"]
+                            }
+                        },
+                        {
+                            "name": "local_explain",
+                            "description": "returns a plain-language explanation.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": { "type": "string" },
+                                    "language": { "type": "string" }
+                                },
+                                "required": ["code", "language"]
+                            }
+                        }
+                    ]
+                })),
+                error: None,
+            };
+            println!("{}", serde_json::to_string(&resp)?);
+            continue;
+        }
+
+        if req.method == "tools/call" {
+            let params = req.params;
+            let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let args = params.get("arguments").unwrap_or(&Value::Null);
+
+            let prompt = match name {
+                "local_generate" => {
+                    let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+                    let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                    let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
+                    let file_path = args.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                    config.prompt_templates.generate_code
+                        .replace("{task}", task)
+                        .replace("{language}", language)
+                        .replace("{context}", context)
+                        .replace("{file_path}", file_path)
+                },
+                "local_edit" => {
+                    let existing_code = args.get("existing_code").and_then(|v| v.as_str()).unwrap_or("");
+                    let instruction = args.get("instruction").and_then(|v| v.as_str()).unwrap_or("");
+                    let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                    config.prompt_templates.edit_code
+                        .replace("{existing_code}", existing_code)
+                        .replace("{instruction}", instruction)
+                        .replace("{language}", language)
+                },
+                "local_complete" => {
+                    let prefix = args.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
+                    let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                    let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
+                    config.prompt_templates.complete_code
+                        .replace("{prefix}", prefix)
+                        .replace("{language}", language)
+                        .replace("{context}", context)
+                },
+                "local_explain" => {
+                    let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                    let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                    config.prompt_templates.explain_code
+                        .replace("{code}", code)
+                        .replace("{language}", language)
+                },
+                _ => {
+                    let resp = RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: id.clone(),
+                        result: None,
+                        error: Some(RpcError {
+                            code: -32601,
+                            message: format!("Unknown tool: {}", name),
+                        }),
+                    };
+                    println!("{}", serde_json::to_string(&resp)?);
+                    continue;
+                }
+            };
+
+            // Call LM Studio
+            let payload = json!({
+                "model": config.model,
+                "messages": [
+                    { "role": "user", "content": prompt }
+                ]
+            });
+
+            let url = format!("{}/v1/chat/completions", config.lm_studio_url);
+            let res = client.post(&url).json(&payload).send().await;
+
+            match res {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        let body: Value = response.json().await.unwrap_or(Value::Null);
+                        let content = body["choices"][0]["message"]["content"].as_str().unwrap_or("");
+                        let resp = RpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            id: id.clone(),
+                            result: Some(json!({
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": content
+                                    }
+                                ]
+                            })),
+                            error: None,
+                        };
+                        println!("{}", serde_json::to_string(&resp)?);
+                    } else {
+                        let status = response.status();
+                        let error_text = response.text().await.unwrap_or_default();
+                        let resp = RpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            id: id.clone(),
+                            result: None,
+                            error: Some(RpcError {
+                                // Important: We catch the error and format it as a valid JSON-RPC error
+                                // so Gemini can handle the failure gracefully.
+                                code: -32000,
+                                message: format!("HTTP Error {}: {}", status, error_text),
+                            }),
+                        };
+                        println!("{}", serde_json::to_string(&resp)?);
+                    }
+                },
+                Err(e) => {
+                    let resp = RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: id.clone(),
+                        result: None,
+                        error: Some(RpcError {
+                            // Local connection errors wrapper
+                            code: -32000,
+                            message: format!("LM Studio connection failed: {}", e),
+                        }),
+                    };
+                    println!("{}", serde_json::to_string(&resp)?);
+                }
+            }
+            continue;
+        }
+
+        // Unknown method
+        let resp = RpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: id.clone(),
+            result: None,
+            error: Some(RpcError {
+                code: -32601,
+                message: format!("Method not found: {}", req.method),
+            }),
+        };
+        println!("{}", serde_json::to_string(&resp)?);
+    }
+
+    Ok(())
+}

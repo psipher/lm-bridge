@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+**/*.pdb
+**/*.d
+**/*.exe
+
+# Registration snippet is machine-specific
+mcp_registration.json
+
+# Local configurations
+.env
+.DS_Store
