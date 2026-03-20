@@ -51,7 +51,7 @@ GPT-OSS is trained on the Harmony Chat Format. By default, `lm-bridge`'s include
 ## Shared Configuration
 
 ### 1. Find Your Model Name
-Open **LM Studio** and look at your loaded model. You will see a small badge (e.g., `openai/gpt-oss-20b` or `qwen/qwen3.5-9b`). 
+Open **LM Studio** and look at your loaded model. You will see a small badge (e.g., `openai/gpt-oss-20b`. 
 **You must copy this string exactly.**
 
 ### 2. Set the Model Name
