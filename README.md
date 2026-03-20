@@ -121,3 +121,8 @@ If the model is loaded in LM Studio, you will see the logs pop up in the LM Stud
   - `local_edit`: For modifying existing code.
   - `local_complete`: For filling in snippets.
   - `local_explain`: For privacy-focused, local architectural analysis.
+
+## Currently in development
+* Make it work with codex app
+* Make it work with multiple local models
+
