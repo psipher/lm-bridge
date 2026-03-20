@@ -1,5 +1,5 @@
 lm_studio_url = "http://localhost:1234"
-model = "qwen/qwen3.5-9b"
+model = "openai/gpt-oss-20b"
 request_timeout_secs = 110
 max_completion_tokens = 4096
 stop_sequences = [
