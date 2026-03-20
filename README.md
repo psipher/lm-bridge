@@ -1,12 +1,37 @@
-# LM Bridge - Rust MCP Server for Google Antigravity and Codex
+# LM Bridge - Rust MCP Server for Google Antigravity
 
-A high-performance Rust-based Model Context Protocol (MCP) server that connects Google Antigravity and Codex to local LLMs via LM Studio. This lets a cloud model handle orchestration and review while your local model handles code generation, editing, completion, and optional local explanation.
+A high-performance Rust-based Model Context Protocol (MCP) server that connects Google Antigravity to local LLMs via LM Studio. This lets a cloud model handle orchestration and review while your local model handles code generation, editing, completion, and optional local explanation.
+
+*Optimized for `openai/gpt-oss-20b` and  tested on an RTX 5070 Ti (64GB RAM).*
 
 ## Prerequisites
 
 - [Rust & Cargo](https://rustup.rs/) (edition 2021)
 - [LM Studio](https://lmstudio.ai/) running locally with its Server enabled.
 - **Windows Users:** You MUST have **Visual Studio Build Tools** installed with the **"Desktop development with C++"** workload selected. This provides the `link.exe` linker required for compilation.
+- **macOS Users:** You MUST have Xcode Command Line Tools installed. You can install them by running `xcode-select --install` in your terminal.
+
+## Hardware & LM Studio Configuration (RTX 5070 Ti / 64GB RAM)
+
+To achieve maximum performance with `gpt-oss-20b`, use the following hardware and inference settings in LM Studio:
+
+### Context and Offload
+- **Context Length:** `32768`
+- **GPU Offload:** `24` (Ensures the entire model sits in the 5070 Ti's high-bandwidth GDDR7 memory)
+- **Unified KV Cache:** `ON` (Allows system RAM to act as a spillover for large context windows)
+- **Offload KV Cache to GPU Memory:** `ON` (Prioritizes keeping the active context on the GPU for faster inference)
+- **Number of Experts:** `4` (Maintains optimal speed-to-intelligence ratio)
+- **Evaluation Batch Size:** `512` (Optimal balance for Tensor Cores)
+
+### Inference & Sampling Settings
+Set these in the right-hand panel of LM Studio to force the model into a strict, deterministic "Worker" mode:
+- **Temperature:** `0.1` or `0.2` (Lowers creativity to prevent syntax errors or hallucinations in code logic)
+- **Top P Sampling:** `0.8` (Balances precision without getting stuck in loops)
+- **Min P Sampling:** `0.05` (Prunes low-probability noise for higher quality snippets)
+- **Reasoning Section Parsing:** `ON` (Allows you to see the worker's internal logic before generating the code block)
+
+### Harmony Chat Format (System Prompt)
+GPT-OSS is trained on the Harmony Chat Format. By default, `lm-bridge`'s included `config.toml` injects the necessary `"Worker"` persona into every code generation prompt automatically. **You do not need to configure a custom System Prompt in LM Studio.** The bridge handles the architecture delegation natively.
 
 ## Build & Setup
 
@@ -26,7 +51,7 @@ A high-performance Rust-based Model Context Protocol (MCP) server that connects 
 ## Shared Configuration
 
 ### 1. Find Your Model Name
-Open **LM Studio** and look at your loaded model. You will see a small badge (e.g., `qwen/qwen3.5-9b` or `TheBloke/Llama-2-7B-Chat-GGUF`). 
+Open **LM Studio** and look at your loaded model. You will see a small badge (e.g., `openai/gpt-oss-20b` or `qwen/qwen3.5-9b`). 
 **You must copy this string exactly.**
 
 ### 2. Set the Model Name
@@ -55,10 +80,10 @@ Open the generated `mcp_registration.json` in your project root. It contains the
 {
   "mcpServers": {
     "local_llm": {
-      "command": "C:\\Path\\To\\Projects\\lm-bridge\\target\\release\\lm-bridge.exe",
+      "command": "C:\\Path\\To\\Projects\\lm-bridge\\target\\release\\lm-bridge.exe", // macOS: "/Users/Name/Projects/lm-bridge/target/release/lm-bridge"
       "args": [],
       "env": {
-        "LM_STUDIO_MODEL": "qwen/qwen3.5-9b"
+        "LM_STUDIO_MODEL": "openai/gpt-oss-20b"
       }
     }
   }
@@ -88,86 +113,9 @@ In an Antigravity chat, type:
 
 If the model is loaded in LM Studio, you will see the logs pop up in the LM Studio server console, and Gemini will present the resulting code.
 
-## Codex Setup
-
-> ⚠️ **WARNING:** The Codex integration is currently highly experimental, buggy, and still in active development. You may experience connection timeouts or inconsistent tool routing. Use at your own risk.
-
-Codex uses two separate layers:
-
-- MCP server registration so Codex can call the `local_llm` tools
-- a Codex skill so Codex prefers the local builder for implementation while keeping orchestration, architecture, review, and web research in Codex
-
-### 1. Register The MCP Server In Codex
-
-Add this block to `%USERPROFILE%\.codex\config.toml`:
-
-```toml
-[mcp_servers.local_llm]
-command = "C:\\path\\to\\lm-bridge\\target\\release\\lm-bridge.exe"
-args = []
-env = { LM_STUDIO_MODEL = "your-loaded-lm-studio-model" }
-```
-
-Notes:
-- change the `command` path if your local checkout lives elsewhere
-- change `LM_STUDIO_MODEL` to the exact model name loaded in LM Studio
-- keep your existing Codex `model`, `model_reasoning_effort`, and other config entries unchanged
-
-### 2. Create The Codex Skill
-
-Copy [SKILL.md](C:\Users\Raghav\Documents\projects\lm-bridge\SKILL.md) from this repository into this folder:
-
-```text
-%USERPROFILE%\.codex\skills\local-llm\
-```
-
-The destination file should be:
-
-```text
-%USERPROFILE%\.codex\skills\local-llm\SKILL.md
-```
-
-What to change before or after copying:
-- you usually do not need to change the skill file itself
-- if you customize the MCP server name in Codex config, update the skill to match that name instead of `local_llm`
-- do not put your personal executable path in the skill file; keep machine-specific paths in `%USERPROFILE%\.codex\config.toml`
-- do not hardcode your personal LM Studio model name in the shared skill file; set it in `%USERPROFILE%\.codex\config.toml`
-
-The skill tells Codex to:
-
-- act as orchestrator, repository reader, architect, researcher, validator, and reviewer
-- use `local_llm` as the implementation engine for code-writing work
-- review local output before applying or returning it
-
-This is the intended role split:
-
-- Codex: orchestration, repo understanding, web search, architecture, review
-- `local_llm`: `local_generate`, `local_edit`, `local_complete`, optional `local_explain`
-
-### 3. Restart Codex
-
-After updating `%USERPROFILE%\.codex\config.toml` and creating the skill, restart Codex so it reloads:
-
-- the MCP server registration
-- the `local-llm` skill directory
-
-### 4. Test In Codex
-
-Try a direct tool-routing prompt first:
-
-> *"Use the `local_llm` builder to create a Python function that adds two numbers, then review the result before returning it."*
-
-Then try a normal coding request without explicitly naming the tool:
-
-> *"Inspect this repository, decide where a `slugify` helper should live, implement it with the local builder, and review the result before applying it."*
-
-If Codex can call the local tools, the MCP registration is working. If the skill is written well, Codex should increasingly route implementation steps to `local_llm` automatically.
-
----
-
 ## Features & Usage
 
-- **Orchestrated Generation:** Antigravity or Codex acts as the Architect (planning and review), while your local LLM acts as the Builder (writing code).
+- **Orchestrated Generation:** Antigravity acts as the Architect (planning and review), while your local LLM acts as the Builder (writing code).
 - **Tools Exposed:**
   - `local_generate`: For new files and modules.
   - `local_edit`: For modifying existing code.

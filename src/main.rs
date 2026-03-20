@@ -327,22 +327,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             // Call LM Studio
-            let mut payload = json!({
-                "model": config.model,
-                "messages": [
+            let mut payload = serde_json::Map::new();
+            payload.insert("model".to_string(), Value::String(config.model.clone()));
+            payload.insert(
+                "messages".to_string(),
+                json!([
                     { "role": "user", "content": prompt }
-                ],
-                "max_tokens": config.max_completion_tokens
-            });
+                ]),
+            );
+            payload.insert(
+                "max_tokens".to_string(),
+                Value::Number(config.max_completion_tokens.into()),
+            );
 
             if !config.stop_sequences.is_empty() {
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("stop".to_string(), json!(config.stop_sequences));
-                }
+                payload.insert("stop".to_string(), json!(config.stop_sequences));
             }
 
             let url = format!("{}/v1/chat/completions", config.lm_studio_url);
-            let res = client.post(&url).json(&payload).send().await;
+            let res = client.post(&url).json(&Value::Object(payload)).send().await;
 
             match res {
                 Ok(response) => {
