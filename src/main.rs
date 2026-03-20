@@ -1,10 +1,10 @@
+use reqwest::ClientBuilder;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use reqwest::ClientBuilder;
 
 #[derive(Deserialize, Debug, Clone)]
 struct Config {
@@ -81,8 +81,12 @@ fn extract_response_text(body: &Value) -> Option<&str> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Check same dir as exe
-    let mut config_path = env::current_exe()?.parent().unwrap().to_path_buf().join("config.toml");
-    
+    let mut config_path = env::current_exe()?
+        .parent()
+        .unwrap()
+        .to_path_buf()
+        .join("config.toml");
+
     if !config_path.exists() {
         // 2. Check parent dir (e.g. if binary is in target/release)
         if let Some(parent) = config_path.parent().and_then(|p| p.parent()) {
@@ -95,7 +99,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if !config_path.exists() {
         // 3. Check grandparent dir (e.g. if binary is in target/release/build/...)
-        if let Some(gp) = config_path.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        if let Some(gp) = config_path
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
             let gp_path = gp.join("config.toml");
             if gp_path.exists() {
                 config_path = gp_path;
@@ -108,17 +116,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_path = PathBuf::from("config.toml");
     }
 
-    let config_content = std::fs::read_to_string(&config_path)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to read {}: {}", config_path.display(), e);
-            std::process::exit(1);
-        });
+    let config_content = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
+        eprintln!("Failed to read {}: {}", config_path.display(), e);
+        std::process::exit(1);
+    });
 
-    let mut config: Config = toml::from_str(&config_content)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to parse config.toml: {}", e);
-            std::process::exit(1);
-        });
+    let mut config: Config = toml::from_str(&config_content).unwrap_or_else(|e| {
+        eprintln!("Failed to parse config.toml: {}", e);
+        std::process::exit(1);
+    });
 
     if let Ok(env_model) = env::var("LM_STUDIO_MODEL") {
         config.model = env_model;
@@ -280,37 +286,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
                     let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
                     let file_path = args.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
-                    config.prompt_templates.generate_code
+                    config
+                        .prompt_templates
+                        .generate_code
                         .replace("{task}", task)
                         .replace("{language}", language)
                         .replace("{context}", context)
                         .replace("{file_path}", file_path)
-                },
+                }
                 "local_edit" => {
-                    let existing_code = args.get("existing_code").and_then(|v| v.as_str()).unwrap_or("");
-                    let instruction = args.get("instruction").and_then(|v| v.as_str()).unwrap_or("");
+                    let existing_code = args
+                        .get("existing_code")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let instruction = args
+                        .get("instruction")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
-                    config.prompt_templates.edit_code
+                    config
+                        .prompt_templates
+                        .edit_code
                         .replace("{existing_code}", existing_code)
                         .replace("{instruction}", instruction)
                         .replace("{language}", language)
-                },
+                }
                 "local_complete" => {
                     let prefix = args.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
                     let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
                     let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
-                    config.prompt_templates.complete_code
+                    config
+                        .prompt_templates
+                        .complete_code
                         .replace("{prefix}", prefix)
                         .replace("{language}", language)
                         .replace("{context}", context)
-                },
+                }
                 "local_explain" => {
                     let code = args.get("code").and_then(|v| v.as_str()).unwrap_or("");
                     let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
-                    config.prompt_templates.explain_code
+                    config
+                        .prompt_templates
+                        .explain_code
                         .replace("{code}", code)
                         .replace("{language}", language)
-                },
+                }
                 _ => {
                     let resp = RpcResponse {
                         jsonrpc: "2.0".to_string(),
@@ -397,7 +417,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         };
                         println!("{}", serde_json::to_string(&resp)?);
                     }
-                },
+                }
                 Err(e) => {
                     let resp = RpcResponse {
                         jsonrpc: "2.0".to_string(),
