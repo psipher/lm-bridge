@@ -112,7 +112,7 @@ In an Antigravity chat, type:
 > *"Use the **local_generate** tool from **local_llm** to write a Python script that prints 'Hello World'."*
 
 If the model is loaded in LM Studio, you will see the logs pop up in the LM Studio server console, and Gemini will present the resulting code.
-
+The MCP server works without mentioning the tool name in the prompt.
 ## Features & Usage
 
 - **Orchestrated Generation:** Antigravity acts as the Architect (planning and review), while your local LLM acts as the Builder (writing code).
