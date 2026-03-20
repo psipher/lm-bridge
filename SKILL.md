@@ -15,9 +15,9 @@ Treat `local_llm` as the implementation engine.
 
 # Default Workflow
 
-1. Understand the request and inspect relevant project context.
-2. Do any required planning, architecture, or research in Codex.
-3. When the task reaches a code-writing step, call the matching `local_llm` MCP tool.
+1. Understand the request and gather only the minimum context needed to choose the right local tool.
+2. Do only brief planning in Codex unless the task is genuinely ambiguous or high risk.
+3. For straightforward coding work, call the matching `local_llm` MCP tool promptly instead of delaying on extended reasoning.
 4. Review the returned code in Codex for correctness, project fit, and regressions.
 5. If needed, refine the prompt and call the local tool again.
 6. Present or apply only the reviewed result.
@@ -41,6 +41,8 @@ Keep work in Codex for these tasks:
 - searching documentation or the web when current information matters
 - deciding whether the generated code should be accepted or revised
 
+Prefer early delegation to `local_llm` when the task is already well specified and does not need deep architectural analysis before implementation.
+
 Only skip `local_llm` when:
 - the MCP server is unavailable
 - the task is not actually a coding task
@@ -51,7 +53,11 @@ Only skip `local_llm` when:
 
 Use `local_generate` for new files, new functions, modules, feature implementations, and substantial code generation from a task description.
 
+Do not use `local_generate` as a fallback for edits to an existing file when the actual task is code modification inside that file.
+
 Use `local_edit` for modifying existing code when you can provide the current code and a precise instruction.
+
+Prefer `local_edit` over `local_generate` for in-place changes to an existing file, component, module, handler, or function.
 
 Use `local_complete` for filling in partial code or continuing an unfinished snippet.
 
@@ -66,7 +72,7 @@ When calling `local_llm`, provide implementation-ready inputs:
 - architectural decisions already made by Codex
 - any repository conventions the generated code must follow
 
-Do not offload vague planning to the local model when Codex can resolve it first.
+Do not offload vague planning to the local model when Codex can resolve it first, but do not spend excessive time planning before a straightforward implementation call.
 
 # Review Rules
 
@@ -87,6 +93,8 @@ If the result is weak, retry with a tighter prompt before falling back.
 If `local_llm` is unavailable, continue with the normal Codex workflow and mention briefly that the local builder path was not active.
 
 If the local tool fails repeatedly, keep orchestration and review in Codex and proceed with the best available fallback.
+
+If `local_edit` returns an empty or unusable result, treat that as a failed edit attempt rather than a valid answer.
 
 # Configuration Notes
 

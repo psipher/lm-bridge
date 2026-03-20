@@ -90,6 +90,8 @@ If the model is loaded in LM Studio, you will see the logs pop up in the LM Stud
 
 ## Codex Setup
 
+> ⚠️ **WARNING:** The Codex integration is currently highly experimental, buggy, and still in active development. You may experience connection timeouts or inconsistent tool routing. Use at your own risk.
+
 Codex uses two separate layers:
 
 - MCP server registration so Codex can call the `local_llm` tools

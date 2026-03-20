@@ -11,6 +11,12 @@ struct Config {
     #[serde(default = "default_url")]
     lm_studio_url: String,
     model: String,
+    #[serde(default = "default_request_timeout_secs")]
+    request_timeout_secs: u64,
+    #[serde(default = "default_max_completion_tokens")]
+    max_completion_tokens: u32,
+    #[serde(default)]
+    stop_sequences: Vec<String>,
     prompt_templates: PromptTemplates,
 }
 
@@ -24,6 +30,14 @@ struct PromptTemplates {
 
 fn default_url() -> String {
     "http://localhost:1234".to_string()
+}
+
+fn default_request_timeout_secs() -> u64 {
+    110
+}
+
+fn default_max_completion_tokens() -> u32 {
+    1200
 }
 
 // JSON-RPC Requests
@@ -52,6 +66,16 @@ struct RpcResponse {
 struct RpcError {
     code: i32,
     message: String,
+}
+
+fn extract_response_text(body: &Value) -> Option<&str> {
+    body.get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
 }
 
 #[tokio::main]
@@ -129,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let client = ClientBuilder::new()
-        .timeout(Duration::from_secs(600)) // 10 minutes timeout
+        .timeout(Duration::from_secs(config.request_timeout_secs))
         .build()?;
 
     let stdin = tokio::io::stdin();
@@ -303,12 +327,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             // Call LM Studio
-            let payload = json!({
+            let mut payload = json!({
                 "model": config.model,
                 "messages": [
                     { "role": "user", "content": prompt }
-                ]
+                ],
+                "max_tokens": config.max_completion_tokens
             });
+
+            if !config.stop_sequences.is_empty() {
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("stop".to_string(), json!(config.stop_sequences));
+                }
+            }
 
             let url = format!("{}/v1/chat/completions", config.lm_studio_url);
             let res = client.post(&url).json(&payload).send().await;
@@ -317,7 +348,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(response) => {
                     if response.status().is_success() {
                         let body: Value = response.json().await.unwrap_or(Value::Null);
-                        let content = body["choices"][0]["message"]["content"].as_str().unwrap_or("");
+                        let Some(content) = extract_response_text(&body) else {
+                            let resp = RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                id: id.clone(),
+                                result: None,
+                                error: Some(RpcError {
+                                    code: -32000,
+                                    message: format!(
+                                        "LM Studio returned an empty completion for tool {}",
+                                        name
+                                    ),
+                                }),
+                            };
+                            println!("{}", serde_json::to_string(&resp)?);
+                            continue;
+                        };
                         let resp = RpcResponse {
                             jsonrpc: "2.0".to_string(),
                             id: id.clone(),
