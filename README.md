@@ -30,6 +30,24 @@ Set these in the right-hand panel of LM Studio to force the model into a strict,
 ### Harmony Chat Format (System Prompt)
 GPT-OSS is trained on the Harmony Chat Format. By default, `lm-bridge`'s included `config.toml` injects the necessary `"Worker"` persona into every code generation prompt automatically. **You do not need to configure a custom System Prompt in LM Studio.** The bridge handles the architecture delegation natively.
 
+### Alternative Models
+While this bridge is optimized natively for `openai/gpt-oss-20b`, you can swap in other top-tier local coding models.
+
+**If you change models, you must update the following:**
+1. **The Model Name:** Change `model = "..."` inside your `config.toml` to exactly match the new badge name in LM Studio.
+2. **Stop Sequences:** Update the `stop_sequences` array in `config.toml` to use the new model's tokenizer limits (e.g. `["<|im_end|>"]` for Qwen or `["<|eot_id|>"]` for Llama-3).
+3. **Prompt Templates:** You must rewrite the `[prompt_templates]` inside `config.toml`, as the default templates inject a `"Worker"` persona specific to GPT-OSS's Harmony Chat architecture.
+4. **LM Studio Chat Format:** Ensure LM Studio is properly set to `ChatML`, `Llama3`, or `DeepSeek` in the right-hand panel, as the bridge relies on LM Studio to properly structure the `/v1/chat/completions` REST request.
+
+**Recommended Alternative Coding Models:**
+- **Qwen2.5-Coder (7B or 32B):** Widely considered the best local open-source coder right now, with a massive context window and speed.
+- **DeepSeek-Coder-V2-Lite:** An incredibly efficient Mixture-of-Experts model tailored for instruction-following and code-fixing.
+- **Mistral Codestral:** Designed purely for developer code-generation and multi-file workflows.
+
+> [!WARNING]
+> **Do NOT use Reasoning Models (e.g., DeepSeek-R1, QwQ)** 
+> Models that natively output `<think>` blocks or print chain-of-thought reasoning will completely break the MCP tool JSON parser. The cloud coordinator expects raw code and strings back. Stick to standard **Instruct** or **Coder** variants!
+
 ## Installation & Setup
 
 ### Option 1: Download Pre-Built Binary (Recommended)
