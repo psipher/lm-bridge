@@ -78,6 +78,33 @@ fn extract_response_text(body: &Value) -> Option<&str> {
         .filter(|content| !content.is_empty())
 }
 
+async fn check_for_updates() {
+    let client = reqwest::Client::builder()
+        .user_agent("lm-bridge-updater")
+        .timeout(Duration::from_secs(4))
+        .build();
+    let Ok(client) = client else { return; };
+
+    let resp = client.get("https://api.github.com/repos/psipher/lm-bridge/releases/latest").send().await;
+    if let Ok(resp) = resp {
+        if let Ok(json) = resp.json::<Value>().await {
+            if let Some(tag_name) = json.get("tag_name").and_then(|v| v.as_str()) {
+                let latest_version = tag_name.trim_start_matches('v');
+                let current_version = env!("CARGO_PKG_VERSION");
+                if latest_version != current_version && !latest_version.is_empty() {
+                    eprintln!(
+                        "\n⚠️ [UPDATE AVAILABLE] lm-bridge v{} is out! (You are running v{})",
+                        latest_version, current_version
+                    );
+                    if let Some(url) = json.get("html_url").and_then(|v| v.as_str()) {
+                        eprintln!("Download at: {}\n", url);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the configuration file path safely by checking up to three parent directories.
@@ -121,6 +148,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!("Active model: {}", config.model);
+
+    // Run the update checker in the background so it doesn't block startup
+    tokio::spawn(check_for_updates());
 
     // Generate mcp_registration.json snippet for the user
     if let Some(root) = config_path.parent() {

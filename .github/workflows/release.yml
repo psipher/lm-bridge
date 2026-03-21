@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: lm-bridge
+            asset_name: lm-bridge-linux-amd64
+          - os: windows-latest
+            artifact_name: lm-bridge.exe
+            asset_name: lm-bridge-windows-amd64.exe
+          - os: macos-latest
+            artifact_name: lm-bridge
+            asset_name: lm-bridge-macos-amd64
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v6
+    
+    - name: Install Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      
+    - name: Build Release Binary
+      run: cargo build --release
+
+    - name: Upload Binary to Release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: target/release/${{ matrix.artifact_name }}
+        asset_name: ${{ matrix.asset_name }}
+        tag: ${{ github.ref }}
+        overwrite: true

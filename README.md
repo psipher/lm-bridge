@@ -33,8 +33,14 @@ Set these in the right-hand panel of LM Studio to force the model into a strict,
 ### Harmony Chat Format (System Prompt)
 GPT-OSS is trained on the Harmony Chat Format. By default, `lm-bridge`'s included `config.toml` injects the necessary `"Worker"` persona into every code generation prompt automatically. **You do not need to configure a custom System Prompt in LM Studio.** The bridge handles the architecture delegation natively.
 
-## Build & Setup
+## Installation & Setup
 
+### Option 1: Download Pre-Built Binary (Recommended)
+1. Go to the [Releases screen](https://github.com/) on GitHub and download the `.exe` (or macOS/Linux binary) for your operating system.
+2. Place the binary inside a new folder (e.g., `lm-bridge`).
+3. Download the example `config.toml` from the repository and place it next to the binary.
+
+### Option 2: Build From Source
 1.  **Clone/Open** the `lm-bridge` folder.
 2.  **Ensure Antigravity is closed** (if you've previously run the server, Windows cannot overwrite the binary while it is running).
 3.  **Compile the binary:**
