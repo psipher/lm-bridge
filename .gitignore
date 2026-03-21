@@ -10,3 +10,5 @@ mcp_registration.json
 # Local configurations
 .env
 .DS_Store
+code_review.md
+verification_review.md

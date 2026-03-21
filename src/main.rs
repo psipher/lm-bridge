@@ -80,41 +80,31 @@ fn extract_response_text(body: &Value) -> Option<&str> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Check same dir as exe
-    let mut config_path = env::current_exe()?
-        .parent()
-        .unwrap()
-        .to_path_buf()
-        .join("config.toml");
+    // Resolve the configuration file path safely by checking up to three parent directories.
+    let mut config_dir = env::current_exe()?.parent().map(|p| p.to_path_buf());
+    let mut resolved_config = None;
 
-    if !config_path.exists() {
-        // 2. Check parent dir (e.g. if binary is in target/release)
-        if let Some(parent) = config_path.parent().and_then(|p| p.parent()) {
-            let p_path = parent.join("config.toml");
-            if p_path.exists() {
-                config_path = p_path;
+    // Resolve config.toml by walking up from the exe directory.
+    // For target/release/lm-bridge.exe this checks:
+    //   iter 0: target/release/config.toml  (exe dir)
+    //   iter 1: target/config.toml          (parent)
+    //   iter 2: <project_root>/config.toml  (grandparent) ← found here
+    // NOTE: The `ref dir` borrow on config_dir is scoped to the `if let` block
+    // and is released before the `.and_then()` move on the next line. This is
+    // intentional and verified correct by the borrow checker.
+    for _ in 0..=2 {
+        if let Some(ref dir) = config_dir {
+            let candidate = dir.join("config.toml");
+            if candidate.exists() {
+                resolved_config = Some(candidate);
+                break;
             }
         }
+        config_dir = config_dir.and_then(|d| d.parent().map(|p| p.to_path_buf()));
     }
 
-    if !config_path.exists() {
-        // 3. Check grandparent dir (e.g. if binary is in target/release/build/...)
-        if let Some(gp) = config_path
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-        {
-            let gp_path = gp.join("config.toml");
-            if gp_path.exists() {
-                config_path = gp_path;
-            }
-        }
-    }
-
-    if !config_path.exists() {
-        // Fallback to current dir if nothing else works
-        config_path = PathBuf::from("config.toml");
-    }
+    let config_path = resolved_config.unwrap_or_else(|| PathBuf::from("config.toml"));
+    eprintln!("Using config at: {}", config_path.display());
 
     let config_content = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
         eprintln!("Failed to read {}: {}", config_path.display(), e);
@@ -130,11 +120,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.model = env_model;
     }
 
+    eprintln!("Active model: {}", config.model);
+
     // Generate mcp_registration.json snippet for the user
     if let Some(root) = config_path.parent() {
         let snippet_path = root.join("mcp_registration.json");
-        // Ensure path for JSON uses escaped double-backslashes for Windows
-        let exe_path = env::current_exe()?.to_string_lossy().replace("\\", "\\\\");
+        // Ensure path for JSON just uses normal string for generic path serialization
+        let exe_path = env::current_exe()?.to_string_lossy().to_string();
         let snippet = json!({
             "mcpServers": {
                 "local_llm": {
@@ -179,10 +171,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "id": Value::Null,
                     "error": { "code": -32700, "message": format!("Parse error: {}", e) }
                 });
-                println!("{}", err_resp);
+                match serde_json::to_string(&err_resp) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => eprintln!("Serialization error: {}", e),
+                }
                 continue;
             }
         };
+
+        if req.method == "notifications/initialized" || req.method == "notifications/cancelled" {
+            continue; // Protocol notifications — no response required
+        }
 
         let id = match req.id {
             Some(i) => i,
@@ -200,12 +199,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     "serverInfo": {
                         "name": "local_llm",
-                        "version": "0.1.0"
+                        "version": "0.2.0"
                     }
                 })),
                 error: None,
             };
-            println!("{}", serde_json::to_string(&resp)?);
+            match serde_json::to_string(&resp) {
+                Ok(s) => println!("{}", s),
+                Err(e) => eprintln!("Serialization error: {}", e),
+            }
             continue;
         }
 
@@ -271,7 +273,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })),
                 error: None,
             };
-            println!("{}", serde_json::to_string(&resp)?);
+            match serde_json::to_string(&resp) {
+                Ok(s) => println!("{}", s),
+                Err(e) => eprintln!("Serialization error: {}", e),
+            }
             continue;
         }
 
@@ -279,6 +284,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let params = req.params;
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let args = params.get("arguments").unwrap_or(&Value::Null);
+
+            eprintln!("Tool called: {}", name);
 
             let prompt = match name {
                 "local_generate" => {
@@ -341,7 +348,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             message: format!("Unknown tool: {}", name),
                         }),
                     };
-                    println!("{}", serde_json::to_string(&resp)?);
+                    match serde_json::to_string(&resp) {
+                        Ok(s) => println!("{}", s),
+                        Err(e) => eprintln!("Serialization error: {}", e),
+                    }
                     continue;
                 }
             };
@@ -375,16 +385,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let resp = RpcResponse {
                                 jsonrpc: "2.0".to_string(),
                                 id: id.clone(),
-                                result: None,
-                                error: Some(RpcError {
-                                    code: -32000,
-                                    message: format!(
-                                        "LM Studio returned an empty completion for tool {}",
-                                        name
-                                    ),
-                                }),
+                                result: Some(json!({
+                                    "isError": true,
+                                    "content": [
+                                        { "type": "text", "text": format!("LM Studio returned an empty completion for tool {}", name) }
+                                    ]
+                                })),
+                                error: None,
                             };
-                            println!("{}", serde_json::to_string(&resp)?);
+                            match serde_json::to_string(&resp) {
+                                Ok(s) => println!("{}", s),
+                                Err(e) => eprintln!("Serialization error: {}", e),
+                            }
                             continue;
                         };
                         let resp = RpcResponse {
@@ -392,44 +404,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             id: id.clone(),
                             result: Some(json!({
                                 "content": [
-                                    {
-                                        "type": "text",
-                                        "text": content
-                                    }
+                                    { "type": "text", "text": content }
                                 ]
                             })),
                             error: None,
                         };
-                        println!("{}", serde_json::to_string(&resp)?);
+                        match serde_json::to_string(&resp) {
+                            Ok(s) => println!("{}", s),
+                            Err(e) => eprintln!("Serialization error: {}", e),
+                        }
                     } else {
                         let status = response.status();
                         let error_text = response.text().await.unwrap_or_default();
                         let resp = RpcResponse {
                             jsonrpc: "2.0".to_string(),
                             id: id.clone(),
-                            result: None,
-                            error: Some(RpcError {
-                                // Important: We catch the error and format it as a valid JSON-RPC error
-                                // so Gemini can handle the failure gracefully.
-                                code: -32000,
-                                message: format!("HTTP Error {}: {}", status, error_text),
-                            }),
+                            result: Some(json!({
+                                "isError": true,
+                                "content": [
+                                    { "type": "text", "text": format!("HTTP Error {}: {}", status, error_text) }
+                                ]
+                            })),
+                            error: None,
                         };
-                        println!("{}", serde_json::to_string(&resp)?);
+                        match serde_json::to_string(&resp) {
+                            Ok(s) => println!("{}", s),
+                            Err(e) => eprintln!("Serialization error: {}", e),
+                        }
                     }
                 }
                 Err(e) => {
                     let resp = RpcResponse {
                         jsonrpc: "2.0".to_string(),
                         id: id.clone(),
-                        result: None,
-                        error: Some(RpcError {
-                            // Local connection errors wrapper
-                            code: -32000,
-                            message: format!("LM Studio connection failed: {}", e),
-                        }),
+                        result: Some(json!({
+                            "isError": true,
+                            "content": [
+                                { "type": "text", "text": format!("LM Studio connection failed: {}", e) }
+                            ]
+                        })),
+                        error: None,
                     };
-                    println!("{}", serde_json::to_string(&resp)?);
+                    match serde_json::to_string(&resp) {
+                        Ok(s) => println!("{}", s),
+                        Err(e) => eprintln!("Serialization error: {}", e),
+                    }
                 }
             }
             continue;
@@ -438,14 +457,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Unknown method
         let resp = RpcResponse {
             jsonrpc: "2.0".to_string(),
-            id: id.clone(),
+            id,
             result: None,
             error: Some(RpcError {
                 code: -32601,
                 message: format!("Method not found: {}", req.method),
             }),
         };
-        println!("{}", serde_json::to_string(&resp)?);
+        match serde_json::to_string(&resp) {
+            Ok(s) => println!("{}", s),
+            Err(e) => eprintln!("Serialization error: {}", e),
+        }
     }
 
     Ok(())
