@@ -6,10 +6,7 @@ A high-performance Rust-based Model Context Protocol (MCP) server that connects 
 
 ## Prerequisites
 
-- [Rust & Cargo](https://rustup.rs/) (edition 2021)
 - [LM Studio](https://lmstudio.ai/) running locally with its Server enabled.
-- **Windows Users:** You MUST have **Visual Studio Build Tools** installed with the **"Desktop development with C++"** workload selected. This provides the `link.exe` linker required for compilation.
-- **macOS Users:** You MUST have Xcode Command Line Tools installed. You can install them by running `xcode-select --install` in your terminal.
 
 ## Hardware & LM Studio Configuration (RTX 5070 Ti / 64GB RAM)
 
@@ -41,6 +38,12 @@ GPT-OSS is trained on the Harmony Chat Format. By default, `lm-bridge`'s include
 3. Download the example `config.toml` from the repository and place it next to the binary.
 
 ### Option 2: Build From Source
+
+**Build Requirements:**
+- [Rust & Cargo](https://rustup.rs/) (edition 2021)
+- **Windows Users:** You MUST have **Visual Studio Build Tools** installed with the **"Desktop development with C++"** workload selected. This provides the `link.exe` linker required for compilation.
+- **macOS Users:** You MUST have Xcode Command Line Tools installed. You can install them by running `xcode-select --install` in your terminal.
+
 1.  **Clone/Open** the `lm-bridge` folder.
 2.  **Ensure Antigravity is closed** (if you've previously run the server, Windows cannot overwrite the binary while it is running).
 3.  **Compile the binary:**
