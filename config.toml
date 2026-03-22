@@ -31,6 +31,8 @@ Requirements:
 - Stay within the existing repository stack and patterns implied by the context.
 - Do not switch frameworks, libraries, routing systems, build tools, or UI stacks unless the task explicitly requires it.
 - Do not invent unrelated scaffolding or sample app structure.
+- Ensure all module imports are strictly necessary and remove unused dependencies.
+- Handle macro evaluations natively; do not print raw macros (e.g., `include_str!`) as string literals unless explicitly requested.
 - If the task is for an existing file, generate code that fits that file's current role and surrounding code.
 
 Provide only the necessary code, ensuring it is correct, clean, and fulfills the task constraints.
@@ -53,6 +55,7 @@ Requirements:
 - Make only the requested change.
 - Preserve the existing framework, stack, and file purpose.
 - Do not rewrite the file into a different framework or architecture.
+- Ensure all module imports are strictly necessary and prune removed dependencies.
 - Do not add unrelated cleanup, refactors, formatting-only changes, or commentary.
 - Return only the modified code.
 
