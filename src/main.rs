@@ -2,7 +2,6 @@ use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -130,7 +129,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_dir = config_dir.and_then(|d| d.parent().map(|p| p.to_path_buf()));
     }
 
-    let config_path = resolved_config.unwrap_or_else(|| PathBuf::from("config.toml"));
+    let config_path = resolved_config.unwrap_or_else(|| {
+        // Zero-setup bootstrapping: Auto-generate config.toml if missing
+        let exe_dir = env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let path = exe_dir.join("config.toml");
+        let default_config = include_str!("../config.toml");
+        let _ = std::fs::write(&path, default_config);
+        path
+    });
+
     eprintln!("Using config at: {}", config_path.display());
 
     let config_content = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
@@ -173,10 +180,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // NEW: Check for one-shot registration flag
+    // Check for interactive (double-click) mode or --register flag
     let args: Vec<String> = env::args().collect();
-    if args.contains(&"--register".to_string()) {
-        println!("Successfully generated mcp_registration.json in the project root.");
+    use std::io::IsTerminal;
+    let is_interactive = std::io::stdin().is_terminal();
+
+    if args.contains(&"--register".to_string()) || is_interactive {
+        println!("\n✅ Successfully generated mcp_registration.json and config.toml in this directory.");
+        if is_interactive {
+            println!("MCP Setup is complete! Please attach this executable to your AI client.");
+            println!("\nPress Enter to close this window...");
+            let mut buf = String::new();
+            let _ = std::io::stdin().read_line(&mut buf);
+        }
         return Ok(());
     }
 

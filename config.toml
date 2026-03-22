@@ -1,6 +1,11 @@
 lm_studio_url = "http://localhost:1234"
 model = "openai/gpt-oss-20b"
+# 110 seconds is used because the MCP protocol enforces a strict 2-minute (120s) tool execution timeout.
 request_timeout_secs = 110
+
+# This is the "writing" limit (output), NOT the "reading" limit (context window).
+# Keep this at 4096 or 8192 to prevent the model from infinitely hallucinating and locking up your GPU.
+# You can still safely set your model's Context Window in LM Studio to 32K+.
 max_completion_tokens = 4096
 stop_sequences = [
     "<|end_of_text|>",
