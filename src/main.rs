@@ -245,7 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     "serverInfo": {
                         "name": "local_llm",
-                        "version": "0.2.0"
+                        "version": "0.2.1"
                     }
                 })),
                 error: None,
