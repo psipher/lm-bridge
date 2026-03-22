@@ -51,9 +51,12 @@ While this bridge is optimized natively for `openai/gpt-oss-20b`, you can swap i
 ## Installation & Setup
 
 ### Option 1: Download Pre-Built Binary (Recommended)
-1. Go to the [Releases screen](https://github.com/) on GitHub and download the `.exe` (or macOS/Linux binary) for your operating system.
+1. Go to the Releases screen on GitHub and download the `.exe` (or macOS/Linux binary) for your operating system.
 2. Place the binary inside a new folder (e.g., `lm-bridge`).
-3. Download the example `config.toml` from the repository and place it next to the binary.
+3. Double-click the `.exe`. It will automatically generate your default `config.toml` and your `mcp_registration.json` snippet in the same folder.
+4. **Important Model Note:** The auto-generated config is strictly tailored for `openai/gpt-oss-20b` out of the box. To use a different model, you do **not** need to recompile the bridge; you simply need to open the `config.toml` file in editor and manually edit the model name, stop sequences, and prompts. Read the **Alternative Models** section above for exact instructions.
+5. **Install to Antigravity:** Now that your registration snippet has been generated, scroll down to the **[Antigravity Setup](#antigravity-setup)** section below to see how to copy it into your IDE Configuration.
+6. **Set Privacy Rules:** Finally, scroll down to the **[Agent Behavior & Privacy Rules](#agent-behavior--privacy-rules-critical)** section to install the custom `local_llm` routing instructions.
 
 ### Option 2: Build From Source
 
