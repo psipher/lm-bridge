@@ -2,8 +2,11 @@ use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
+use std::io::IsTerminal;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
+
+mod installer;
 
 #[derive(Deserialize, Debug, Clone)]
 struct Config {
@@ -82,9 +85,14 @@ async fn check_for_updates() {
         .user_agent("lm-bridge-updater")
         .timeout(Duration::from_secs(4))
         .build();
-    let Ok(client) = client else { return; };
+    let Ok(client) = client else {
+        return;
+    };
 
-    let resp = client.get("https://api.github.com/repos/psipher/lm-bridge/releases/latest").send().await;
+    let resp = client
+        .get("https://api.github.com/repos/psipher/lm-bridge/releases/latest")
+        .send()
+        .await;
     if let Ok(resp) = resp {
         if let Ok(json) = resp.json::<Value>().await {
             if let Some(tag_name) = json.get("tag_name").and_then(|v| v.as_str()) {
@@ -182,18 +190,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check for interactive (double-click) mode or --register flag
     let args: Vec<String> = env::args().collect();
-    use std::io::IsTerminal;
     let is_interactive = std::io::stdin().is_terminal();
 
     if args.contains(&"--register".to_string()) || is_interactive {
-        println!("\n✅ Successfully generated mcp_registration.json and config.toml in this directory.");
         if is_interactive {
-            println!("MCP Setup is complete! Please attach this executable to your AI client.");
+            let exe_path = env::current_exe()?.to_string_lossy().to_string();
+            let result = installer::run_interactive_installer(exe_path, config.model.clone()).await;
+            if let Err(e) = result {
+                eprintln!("Installer error: {}", e);
+            }
+            // Ask user to press enter to close window
             println!("\nPress Enter to close this window...");
             let mut buf = String::new();
             let _ = std::io::stdin().read_line(&mut buf);
+        } else {
+            // CLI raw --register call
+            println!("\n✅ Successfully generated mcp_registration.json and config.toml in this directory.");
         }
-        return Ok(());
+        std::process::exit(0);
     }
 
     let client = ClientBuilder::new()
@@ -245,7 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                     "serverInfo": {
                         "name": "local_llm",
-                        "version": "0.2.1"
+                        "version": "0.3.0"
                     }
                 })),
                 error: None,
