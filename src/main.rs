@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 mod installer;
@@ -80,36 +82,121 @@ fn extract_response_text(body: &Value) -> Option<&str> {
         .filter(|content| !content.is_empty())
 }
 
-async fn check_for_updates() {
-    let client = reqwest::Client::builder()
-        .user_agent("lm-bridge-updater")
-        .timeout(Duration::from_secs(4))
-        .build();
-    let Ok(client) = client else {
-        return;
-    };
+fn debug_logging_enabled() -> bool {
+    matches!(
+        env::var("LM_BRIDGE_DEBUG").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE")
+    )
+}
 
-    let resp = client
-        .get("https://api.github.com/repos/psipher/lm-bridge/releases/latest")
-        .send()
-        .await;
-    if let Ok(resp) = resp {
-        if let Ok(json) = resp.json::<Value>().await {
-            if let Some(tag_name) = json.get("tag_name").and_then(|v| v.as_str()) {
-                let latest_version = tag_name.trim_start_matches('v');
-                let current_version = env!("CARGO_PKG_VERSION");
-                if latest_version != current_version && !latest_version.is_empty() {
-                    eprintln!(
-                        "\n⚠️ [UPDATE AVAILABLE] lm-bridge v{} is out! (You are running v{})",
-                        latest_version, current_version
-                    );
-                    if let Some(url) = json.get("html_url").and_then(|v| v.as_str()) {
-                        eprintln!("Download at: {}\n", url);
-                    }
+fn debug_log(message: &str) {
+    if debug_logging_enabled() {
+        eprintln!("[lm-bridge] {}", message);
+    }
+}
+
+#[cfg(windows)]
+fn home_dir() -> PathBuf {
+    PathBuf::from(env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string()))
+}
+
+#[cfg(not(windows))]
+fn home_dir() -> PathBuf {
+    PathBuf::from(env::var("HOME").unwrap_or_else(|_| "/".to_string()))
+}
+
+async fn run_self_test(
+    config_path: &std::path::Path,
+    config: &Config,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let exe_path = env::current_exe()?;
+    let codex_config_path = home_dir().join(".codex").join("config.toml");
+    let codex_skill_path = home_dir()
+        .join(".codex")
+        .join("skills")
+        .join("local-llm")
+        .join("SKILL.md");
+    let models_url = format!("{}/v1/models", config.lm_studio_url);
+
+    println!("lm-bridge self-test");
+    println!("date: 2026-03-22");
+    println!("config_path: {}", config_path.display());
+    println!("exe_path: {}", exe_path.display());
+    println!("lm_studio_url: {}", config.lm_studio_url);
+    println!("model: {}", config.model);
+    println!(
+        "codex_config_path: {} ({})",
+        codex_config_path.display(),
+        if codex_config_path.exists() {
+            "exists"
+        } else {
+            "missing"
+        }
+    );
+    println!(
+        "codex_skill_path: {} ({})",
+        codex_skill_path.display(),
+        if codex_skill_path.exists() {
+            "exists"
+        } else {
+            "missing"
+        }
+    );
+
+    let client = ClientBuilder::new()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let started = Instant::now();
+    let response = client.get(&models_url).send().await;
+    match response {
+        Ok(resp) => {
+            let elapsed_ms = started.elapsed().as_millis();
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                println!("lm_studio_models_check: failed");
+                println!("http_status: {}", status);
+                println!("elapsed_ms: {}", elapsed_ms);
+                println!("details: {}", body);
+                return Ok(());
+            }
+
+            let body: Value = resp.json().await.unwrap_or(Value::Null);
+            let models = body
+                .get("data")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let model_ids: Vec<String> = models
+                .iter()
+                .filter_map(|item| item.get("id").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            let configured_model_present = model_ids.iter().any(|id| id == &config.model);
+
+            println!("lm_studio_models_check: ok");
+            println!("elapsed_ms: {}", elapsed_ms);
+            println!("models_found: {}", model_ids.len());
+            println!(
+                "configured_model_present: {}",
+                if configured_model_present {
+                    "yes"
+                } else {
+                    "no"
                 }
+            );
+            if !model_ids.is_empty() {
+                println!("available_models: {}", model_ids.join(", "));
             }
         }
+        Err(err) => {
+            println!("lm_studio_models_check: failed");
+            println!("elapsed_ms: {}", started.elapsed().as_millis());
+            println!("details: {}", err);
+        }
     }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -146,8 +233,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         path
     });
 
-    eprintln!("Using config at: {}", config_path.display());
-
     let config_content = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
         eprintln!("Failed to read {}: {}", config_path.display(), e);
         std::process::exit(1);
@@ -162,39 +247,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.model = env_model;
     }
 
-    eprintln!("Active model: {}", config.model);
-
-    // Run the update checker in the background so it doesn't block startup
-    tokio::spawn(check_for_updates());
-
-    // Generate mcp_registration.json snippet for the user
-    if let Some(root) = config_path.parent() {
-        let snippet_path = root.join("mcp_registration.json");
-        // Ensure path for JSON just uses normal string for generic path serialization
-        let exe_path = env::current_exe()?.to_string_lossy().to_string();
-        let snippet = json!({
-            "mcpServers": {
-                "local_llm": {
-                    "command": exe_path,
-                    "args": [],
-                    "env": {
-                        "LM_STUDIO_MODEL": config.model
-                    }
-                }
-            }
-        });
-        if let Ok(content) = serde_json::to_string_pretty(&snippet) {
-            let _ = std::fs::write(&snippet_path, content);
-        }
-    }
-
     // Check for interactive (double-click) mode or --register flag
     let args: Vec<String> = env::args().collect();
     let is_interactive = std::io::stdin().is_terminal();
 
+    if args.contains(&"--self-test".to_string()) {
+        run_self_test(&config_path, &config).await?;
+        std::process::exit(0);
+    }
+
     if args.contains(&"--register".to_string()) || is_interactive {
+        let exe_path = env::current_exe()?.to_string_lossy().to_string();
+        if let Some(root) = config_path.parent() {
+            if let Err(e) = installer::write_registration_artifacts(root, &exe_path, &config.model)
+            {
+                eprintln!("Failed to generate registration files: {}", e);
+            }
+        }
+
         if is_interactive {
-            let exe_path = env::current_exe()?.to_string_lossy().to_string();
             let result = installer::run_interactive_installer(exe_path, config.model.clone()).await;
             if let Err(e) = result {
                 eprintln!("Installer error: {}", e);
@@ -205,7 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = std::io::stdin().read_line(&mut buf);
         } else {
             // CLI raw --register call
-            println!("\n✅ Successfully generated mcp_registration.json and config.toml in this directory.");
+            println!("\n✅ Successfully generated Codex and Antigravity registration snippets next to config.toml.");
         }
         std::process::exit(0);
     }
@@ -249,6 +320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if req.method == "initialize" {
+            let init_started = Instant::now();
             let resp = RpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id,
@@ -268,6 +340,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(s) => println!("{}", s),
                 Err(e) => eprintln!("Serialization error: {}", e),
             }
+            debug_log(&format!(
+                "initialize handled in {} ms",
+                init_started.elapsed().as_millis()
+            ));
             continue;
         }
 
@@ -344,8 +420,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let params = req.params;
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let args = params.get("arguments").unwrap_or(&Value::Null);
-
-            eprintln!("Tool called: {}", name);
+            let request_started = Instant::now();
+            debug_log(&format!("tool call received: {}", name));
 
             let prompt = match name {
                 "local_generate" => {
@@ -435,10 +511,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let url = format!("{}/v1/chat/completions", config.lm_studio_url);
+            let upstream_started = Instant::now();
             let res = client.post(&url).json(&Value::Object(payload)).send().await;
 
             match res {
                 Ok(response) => {
+                    debug_log(&format!(
+                        "LM Studio responded to {} in {} ms",
+                        name,
+                        upstream_started.elapsed().as_millis()
+                    ));
                     if response.status().is_success() {
                         let body: Value = response.json().await.unwrap_or(Value::Null);
                         let Some(content) = extract_response_text(&body) else {
@@ -473,6 +555,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Ok(s) => println!("{}", s),
                             Err(e) => eprintln!("Serialization error: {}", e),
                         }
+                        debug_log(&format!(
+                            "tool call completed: {} in {} ms",
+                            name,
+                            request_started.elapsed().as_millis()
+                        ));
                     } else {
                         let status = response.status();
                         let error_text = response.text().await.unwrap_or_default();
@@ -491,6 +578,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Ok(s) => println!("{}", s),
                             Err(e) => eprintln!("Serialization error: {}", e),
                         }
+                        debug_log(&format!(
+                            "tool call failed upstream: {} in {} ms",
+                            name,
+                            request_started.elapsed().as_millis()
+                        ));
                     }
                 }
                 Err(e) => {
@@ -509,6 +601,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(s) => println!("{}", s),
                         Err(e) => eprintln!("Serialization error: {}", e),
                     }
+                    debug_log(&format!(
+                        "tool call connection error: {} in {} ms ({})",
+                        name,
+                        request_started.elapsed().as_millis(),
+                        e
+                    ));
                 }
             }
             continue;

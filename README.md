@@ -1,116 +1,201 @@
-# LM Bridge - Rust MCP Server for Google Antigravity
+# LM Bridge
 
-A high-performance Rust-based Model Context Protocol (MCP) server that connects Google Antigravity to local LLMs via LM Studio. This lets a cloud model handle orchestration and review while your local model handles code generation, editing, completion, and optional local explanation.
+Rust MCP server for routing Codex or Google Antigravity to a local LM Studio model.
 
-*Optimized for `openai/gpt-oss-20b` and  tested on an RTX 5070 Ti (64GB RAM).*
+`lm-bridge` exposes local coding tools such as `local_generate` and `local_edit` over MCP. The intended split is:
+
+- Codex or Antigravity handles orchestration, planning, and review.
+- Your local LM Studio model handles the code-writing step.
+
+The project is now documented for Codex first. Antigravity remains supported.
+
+## What Codex expects
+
+OpenAI's current Codex MCP docs say Codex MCP servers are configured in `~/.codex/config.toml` or project `.codex/config.toml`, under `[mcp_servers.<name>]`, with `command`, optional `args`, optional `env`, optional `cwd`, and optional timeout fields. Reference: [Model Context Protocol – Codex](https://developers.openai.com/codex/mcp).
+
+`lm-bridge` now aligns with that model:
+
+- the installer can update `%USERPROFILE%\.codex\config.toml`
+- the project can generate a Codex-ready TOML snippet in `codex_mcp_config.toml`
+- the repo includes a Codex skill at `integrations/codex/SKILL.md`
+- the repo also includes an evaluation-oriented Codex skill at `integrations/codex-eval/SKILL.md`
 
 ## Prerequisites
 
-- [LM Studio](https://lmstudio.ai/) running locally with its Server enabled.
+- [LM Studio](https://lmstudio.ai/) running locally with its server enabled
+- a model loaded in LM Studio
+- Rust only if you want to build from source
 
-## Hardware & LM Studio Configuration (RTX 5070 Ti / 64GB RAM)
+## Recommended LM Studio settings
 
-To achieve maximum performance with `gpt-oss-20b`, use the following hardware and inference settings in LM Studio:
+The default `config.toml` in this repo is tuned for `openai/gpt-oss-20b`.
 
-### Context and Offload
-- **Context Length:** `32768`
-- **GPU Offload:** `24` (Ensures the entire model sits in the 5070 Ti's high-bandwidth GDDR7 memory)
-- **Unified KV Cache:** `ON` (Allows system RAM to act as a spillover for large context windows)
-- **Offload KV Cache to GPU Memory:** `ON` (Prioritizes keeping the active context on the GPU for faster inference)
-- **Number of Experts:** `4` (Maintains optimal speed-to-intelligence ratio)
-- **Evaluation Batch Size:** `512` (Optimal balance for Tensor Cores)
+Suggested baseline on an RTX 5070 Ti / 64 GB RAM setup:
 
-### Inference & Sampling Settings
-Set these in the right-hand panel of LM Studio to force the model into a strict, deterministic "Worker" mode:
-- **Temperature:** `0.1` or `0.2` (Lowers creativity to prevent syntax errors or hallucinations in code logic)
-- **Top P Sampling:** `0.8` (Balances precision without getting stuck in loops)
-- **Min P Sampling:** `0.05` (Prunes low-probability noise for higher quality snippets)
-- **Reasoning Section Parsing:** `ON` (Allows you to see the worker's internal logic before generating the code block)
+- Context Length: `32768`
+- GPU Offload: `24`
+- Unified KV Cache: `ON`
+- Offload KV Cache to GPU Memory: `ON`
+- Number of Experts: `4`
+- Evaluation Batch Size: `512`
+- Temperature: `0.1` or `0.2`
+- Top P: `0.8`
+- Min P: `0.05`
 
-### Harmony Chat Format (System Prompt)
-GPT-OSS is trained on the Harmony Chat Format. By default, `lm-bridge`'s included `config.toml` injects the necessary `"Worker"` persona into every code generation prompt automatically. **You do not need to configure a custom System Prompt in LM Studio.** The bridge handles the architecture delegation natively.
+Do not use reasoning models that emit `<think>` or long hidden reasoning blocks. They are a bad fit for tool JSON output and will often break downstream parsing.
 
-### Alternative Models
-While this bridge is optimized natively for `openai/gpt-oss-20b`, you can swap in other top-tier local coding models.
+## Build
 
-**If you change models, you must update the following:**
-1. **The Model Name:** Change `model = "..."` inside your `config.toml` to exactly match the new badge name in LM Studio.
-2. **Stop Sequences:** Update the `stop_sequences` array in `config.toml` to use the new model's tokenizer limits (e.g. `["<|im_end|>"]` for Qwen or `["<|eot_id|>"]` for Llama-3).
-3. **Prompt Templates:** You must rewrite the `[prompt_templates]` inside `config.toml`, as the default templates inject a `"Worker"` persona specific to GPT-OSS's Harmony Chat architecture.
-4. **LM Studio Chat Format:** Ensure LM Studio is properly set to `ChatML`, `Llama3`, or `DeepSeek` in the right-hand panel, as the bridge relies on LM Studio to properly structure the `/v1/chat/completions` REST request.
+### Prebuilt binary
 
-**Recommended Alternative Coding Models:**
-- **Qwen2.5-Coder (7B or 32B):** Widely considered the best local open-source coder right now, with a massive context window and speed.
-- **DeepSeek-Coder-V2-Lite:** An incredibly efficient Mixture-of-Experts model tailored for instruction-following and code-fixing.
-- **Mistral Codestral:** Designed purely for developer code-generation and multi-file workflows.
+1. Download the latest release for your platform.
+2. Put the binary in its own folder.
+3. Run it once. If `config.toml` does not exist next to the executable, it will be created automatically.
+4. Run the binary interactively to choose manual setup, Antigravity install, or Codex install.
 
-> [!WARNING]
-> **Do NOT use Reasoning Models (e.g., DeepSeek-R1, QwQ)** 
-> Models that natively output `<think>` blocks or print chain-of-thought reasoning will completely break the MCP tool JSON parser. The cloud coordinator expects raw code and strings back. Stick to standard **Instruct** or **Coder** variants!
+### Build from source
 
-## Installation & Setup
+Requirements:
 
-### Option 1: Download Pre-Built Binary (Recommended)
-1. Go to the Releases screen on GitHub and download the `.exe` (or macOS/Linux binary) for your operating system.
-2. Place the binary inside a new folder (e.g., `lm-bridge`).
-3. Double-click the `.exe`. It will automatically generate your default `config.toml` and your `mcp_registration.json` snippet in the same folder.
-4. **Important Model Note:** The auto-generated config is strictly tailored for `openai/gpt-oss-20b` out of the box. To use a different model, you do **not** need to recompile the bridge; you simply need to open the `config.toml` file in editor and manually edit the model name, stop sequences, and prompts. Read the **Alternative Models** section above for exact instructions.
-5. **Install to Antigravity:** Now that your registration snippet has been generated, scroll down to the **[Antigravity Setup](#antigravity-setup)** section below to see how to copy it into your IDE Configuration.
-6. **Set Privacy Rules:** Finally, scroll down to the **[Agent Behavior & Privacy Rules](#agent-behavior--privacy-rules-critical)** section to install the custom `local_llm` routing instructions.
+- Rust and Cargo
+- Windows: Visual Studio Build Tools with Desktop development with C++
+- macOS: Xcode Command Line Tools
 
-### Option 2: Build From Source
+Build:
 
-**Build Requirements:**
-- [Rust & Cargo](https://rustup.rs/) (edition 2021)
-- **Windows Users:** You MUST have **Visual Studio Build Tools** installed with the **"Desktop development with C++"** workload selected. This provides the `link.exe` linker required for compilation.
-- **macOS Users:** You MUST have Xcode Command Line Tools installed. You can install them by running `xcode-select --install` in your terminal.
-
-1.  **Clone/Open** the `lm-bridge` folder.
-2.  **Ensure Antigravity is closed** (if you've previously run the server, Windows cannot overwrite the binary while it is running).
-3.  **Compile the binary:**
-    ```bash
-    cargo build --release
-    ```
-4.  **Generate your Registration Snippet:**
-    Run the binary once to automatically generate your configuration JSON and exit:
-    ```bash
-    cargo run --release -- --register
-    ```
-    This will generate your **`mcp_registration.json`** file in your project root and quit immediately.
-
-## Shared Configuration
-
-### 1. Find Your Model Name
-Open **LM Studio** and look at your loaded model. You will see a small badge (e.g., `openai/gpt-oss-20b`. 
-**You must copy this string exactly.**
-
-### 2. Set the Model Name
-You have two ways to set the model:
--   **Method A (Easiest):** Edit the `model` field in your **`config.toml`** file next to the server.
--   **Method B (Active):** Set the `LM_STUDIO_MODEL` environment variable in the MCP client configuration. This overrides `config.toml`.
-
-```toml
-# In config.toml
-model = "your-copied-model-name-here"
+```bash
+cargo build --release
 ```
 
-## Antigravity Setup
+Generate setup snippets without starting the MCP server:
 
-### 1. Use The Generated Registration Snippet
-Open the generated `mcp_registration.json` in your project root. It contains the exact absolute path of your `lm-bridge.exe` and your current model name. You can copy this block directly into your Antigravity configuration.
+```bash
+cargo run --release -- --register
+```
 
-### 2. Register In Antigravity
-1.  Open Antigravity and go to the **"Manage MCP servers"** screen.
-2.  In the top-right corner, click the **"View raw config" 📄** icon. This will open your `mcp_config.json` directly in the editor.
-3.  **Paste** the block from your `mcp_registration.json` into the `"mcpServers"` object.
-4.  **Save** the file.
-5.  Go back to the MCP screen and click **"Refresh" 🔄**. Your `local_llm` node should now be green and active!
+That creates these files next to `config.toml`:
+
+- `codex_mcp_config.toml`
+- `mcp_registration.json`
+
+Run a fast local diagnostic without starting the MCP loop:
+
+```bash
+cargo run --release -- --self-test
+```
+
+That self-test reports:
+
+- resolved `config.toml` path
+- resolved executable path
+- current LM Studio URL and configured model
+- whether Codex config and skill files exist
+- whether `LM Studio /v1/models` is reachable
+- whether the configured model is currently exposed by LM Studio
+
+## Shared model configuration
+
+Open LM Studio, copy the exact loaded model identifier, and set it in one of these places:
+
+- `config.toml` next to `lm-bridge`
+- `LM_STUDIO_MODEL` in your MCP client config
+
+Example:
+
+```toml
+model = "openai/gpt-oss-20b"
+```
+
+Client-side `LM_STUDIO_MODEL` overrides the local `config.toml` value.
+
+## Codex setup
+
+### Option 1: Auto-install from the interactive installer
+
+Run the executable directly and choose:
+
+1. `[3] Auto-Install for Codex`
+2. `[1] MCP Config Only`, `[2] Skill Only`, or `[3] Both`
+
+The installer writes:
+
+- `%USERPROFILE%\.codex\config.toml`
+- `%USERPROFILE%\.codex\skills\local-llm\SKILL.md`
+
+The MCP server is registered as `local_llm`.
+
+### Option 2: Manual Codex setup
+
+Copy the generated `codex_mcp_config.toml` snippet into your `~/.codex/config.toml`.
+
+Example:
+
+```toml
+[mcp_servers.local_llm]
+command = "C:\\Path\\To\\lm-bridge.exe"
+args = []
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+
+[mcp_servers.local_llm.env]
+LM_STUDIO_MODEL = "openai/gpt-oss-20b"
+```
+
+Then install the included skill by copying:
+
+- repo source: `integrations/codex/SKILL.md`
+- destination: `%USERPROFILE%\.codex\skills\local-llm\SKILL.md`
+
+### Optional evaluation skill
+
+If you want the local model to stay the primary code owner for longer before Codex falls back, install the evaluation skill instead:
+
+- repo source: `integrations/codex-eval/SKILL.md`
+- suggested destination: `%USERPROFILE%\.codex\skills\local-llm-eval\SKILL.md`
+
+Use the default `local-llm` skill for normal production work. Use `local-llm-eval` when you want stricter benchmarking behavior with at least two defect-specific repair attempts before Codex takes over implementation.
+
+### Verify in Codex
+
+1. Restart Codex after changing MCP config.
+2. Open `/mcp` and confirm `local_llm` is active.
+3. Ask Codex to use `local_generate` or perform a coding task that should route to the local builder skill.
+
+If you want timing diagnostics for startup or tool calls, start the server with `LM_BRIDGE_DEBUG=1`.
+
+Before debugging Codex itself, run:
+
+```bash
+cargo run --release -- --self-test
+```
+
+If `configured_model_present: no`, the problem is in LM Studio or the configured model name, not in Codex MCP registration.
+
+## Google Antigravity setup
+
+### Option 1: Auto-install from the interactive installer
+
+Run the executable and choose:
+
+1. `[2] Auto-Install for Google Antigravity`
+2. `[1] MCP Config Only`, `[2] Agent Rules Only`, or `[3] Both`
+
+The installer updates:
+
+- `~/.gemini/antigravity/mcp_config.json`
+- `~/.gemini/GEMINI.md`
+
+### Option 2: Manual setup
+
+Open the generated `mcp_registration.json` and paste the `local_llm` block into Antigravity's `mcp_config.json`.
+
+Example:
 
 ```json
 {
   "mcpServers": {
     "local_llm": {
-      "command": "C:\\Path\\To\\Projects\\lm-bridge\\target\\release\\lm-bridge.exe", // macOS: "/Users/Name/Projects/lm-bridge/target/release/lm-bridge"
+      "command": "C:\\Path\\To\\lm-bridge.exe",
       "args": [],
       "env": {
         "LM_STUDIO_MODEL": "openai/gpt-oss-20b"
@@ -120,31 +205,28 @@ Open the generated `mcp_registration.json` in your project root. It contains the
 }
 ```
 
-## Agent Behavior & Privacy Rules (CRITICAL)
+For agent behavior, use the rules in `integrations/google_antigravity/GEMINI.md`.
 
-To make Gemini intelligently use your local model without being prompted every time, you should add the **Google Antigravity Global Rules** to your Agent's configuration.
+## Tools exposed
 
-1.  Click the **`+`** (or `...`) menu in the top-right of your chat window.
-2.  Select **Customization** (or **Rules**).
-3.  Copy and paste the exact rules found in [`integrations/google_antigravity/GEMINI.md`](integrations/google_antigravity/GEMINI.md).
+- `local_generate`
+- `local_edit`
+- `local_complete`
+- `local_explain`
 
-## Test In Antigravity
-In an Antigravity chat, type:
+## Startup and latency notes
 
-> *"Use the **local_generate** tool from **local_llm** to write a Python script that prints 'Hello World'."*
+To reduce Codex-side latency, normal MCP startup no longer generates registration files and no longer performs background update checks. Registration artifacts are only generated in manual setup or `--register` flows.
 
-If the model is loaded in LM Studio, you will see the logs pop up in the LM Studio server console, and Gemini will present the resulting code.
-The MCP server works without mentioning the tool name in the prompt.
-## Features & Usage
+If Codex still feels slow to invoke the server, check these first:
 
-- **Orchestrated Generation:** Antigravity acts as the Architect (planning and review), while your local LLM acts as the Builder (writing code).
-- **Tools Exposed:**
-  - `local_generate`: For new files and modules.
-  - `local_edit`: For modifying existing code.
-  - `local_complete`: For filling in snippets.
-  - `local_explain`: For privacy-focused, local architectural analysis.
+- LM Studio is already running
+- the configured model is loaded
+- the `LM_STUDIO_MODEL` value matches the exact LM Studio model name
+- Codex is pointing at the release binary, not a slow debug build
 
-## Currently in development
-* Make it work with codex app
-* Make it work with multiple local models
+## Current focus
 
+- improve Codex integration quality
+- keep Antigravity support working
+- add support for more local model presets
